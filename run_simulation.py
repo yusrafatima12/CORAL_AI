@@ -11,17 +11,18 @@ auv_id = model.body("auv").id
 
 # 2. Physics
 mass = model.body_mass[auv_id]
-buoyancy_force = mass * 9.81      # robot paani mein tairta hai
-drag_coefficient = 8.0            # paani ki rukawat
+buoyancy_force = mass * 9.81
+drag_coefficient = 8.0
 
-# 3. Jagahein (x, y, z) meters mein
+# 3. Jagahein
 home = np.array([0.0, 0.0, 1.0])
 goal = np.array([3.0, 2.0, 0.6])
-waypoints = [goal, home]          # pehle goal, phir home
+waypoints = [goal, home]
+names = ["goal", "home"]          # har target ka naam
 wp_index = 0
 mission_done = False
 
-# 4. Controller settings
+# 4. Controller
 kp = 15.0
 kd = 17.0
 max_force = 15.0
@@ -31,7 +32,12 @@ battery_pct = 100.0
 low_battery_limit = 30.0
 returning = False
 
-# 6. Graph ke liye data
+# 6. Sonar settings
+sonar_range = 1.0         # 1 meter tak dekhta hai
+detour_distance = 1.0     # patthar se kitna side mein hatna hai
+obstacle_warned = False
+
+# 7. Graph data
 times = []
 z_values = []
 battery_values = []
@@ -51,9 +57,31 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
         position = data.qpos[:3]
         velocity = data.qvel[:3]
 
-        # Controller
         target = waypoints[wp_index]
         error = target - position
+
+        # --- SONAR: target ki taraf ray bhejo ---
+        direction = error / (np.linalg.norm(error) + 1e-6)
+        geomid = np.zeros(1, dtype=np.int32)
+        sonar_dist = mujoco.mj_ray(
+            model, data, position.copy(), direction, None, 1, auv_id, geomid
+        )
+
+        # Patthar mila? To detour point banao
+        if (0 < sonar_dist < sonar_range
+                and not obstacle_warned
+                and names[wp_index] != "detour"):
+            hit_point = position + direction * sonar_dist
+            side = np.array([-direction[1], direction[0], 0.0])  # left side
+            detour = hit_point + side * detour_distance
+            detour[2] = position[2]
+            waypoints.insert(wp_index, detour)
+            names.insert(wp_index, "detour")
+            obstacle_warned = True
+            print("SONAR: obstacle detected! Going around it...")
+            continue   # naye target ke saath loop dobara shuru
+
+        # Controller
         drag = -drag_coefficient * velocity
         control = np.clip(kp * error - kd * velocity, -max_force, max_force)
 
@@ -64,38 +92,41 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
 
         mujoco.mj_step(model, data)
 
-        # Battery kam karo
+        # Battery
         battery_pct -= 0.002 + 0.0005 * np.linalg.norm(control)
-
-        # Battery kam? Seedha home jao
         if battery_pct < low_battery_limit and not returning:
             print("LOW BATTERY! Returning home...")
             wp_index = len(waypoints) - 1
             returning = True
 
-        # Graph ka data save karo
+        # Graph data
         times.append(data.time)
         z_values.append(position[2])
         battery_values.append(battery_pct)
 
         # Target par pohanche?
         if np.linalg.norm(error) < 0.10:
-            if wp_index < len(waypoints) - 1:
+            if names[wp_index] == "detour":
+                print("Obstacle passed, continuing...")
+                wp_index += 1
+                obstacle_warned = False
+            elif names[wp_index] == "goal":
                 print("Goal reached! Going back home...")
                 wp_index += 1
+                obstacle_warned = False
             elif not mission_done:
                 print("Mission complete: robot is back home")
                 mission_done = True
 
-        # Terminal par status
         step += 1
         if step % 100 == 0:
             print("Pos:", position.round(2),
+                  "| Target:", names[wp_index],
                   "| Battery:", round(battery_pct, 1), "%")
 
         viewer.sync()
 
-# 7. Viewer band hone ke baad graph banao
+# 8. Graphs
 plt.figure(figsize=(10, 4))
 
 plt.subplot(1, 2, 1)

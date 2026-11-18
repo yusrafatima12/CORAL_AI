@@ -15,12 +15,17 @@
               type="plane"
               size="5 5 0.1"
               rgba="0.5 0.4 0.3 1"/>
+                <!-- Rock obstacle -->
+        <geom name="rock"
+              type="box"
+              pos="1.5 1.0 0.5"
+              size="0.3 0.3 0.5"
+              rgba="0.8 0.1 0.1 1"/>
 
         <!-- Our AUV -->
         <body name="auv" pos="0 0 1">
 
-            <freejoint/>
-
+        <joint name="auv_free" type="free" damping="0.3"/>
             <geom name="auv_body"
                type="ellipsoid"
                size="0.45 0.14 0.14"
